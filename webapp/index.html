@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lock Unlock</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="mobile.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>🔓 Unlock</h1>
+    </header>
+
+    <div id="no-bluetooth-banner" class="banner hidden">
+      Web Bluetooth isn't available in this browser. On iPhone, use the
+      <strong>Bluefy</strong> app instead of Safari/Chrome. On desktop or
+      Android, use Chrome or Edge.
+    </div>
+
+    <div id="locks-list" class="mobile-locks-list">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading paired locks...</p>
+      </div>
+    </div>
+
+    <button id="pair-new-btn" class="pair-new-btn">+ Pair New Lock</button>
+
+    <div class="activity-log-panel">
+      <div class="activity-log-header">
+        <h2>Activity Log</h2>
+        <button id="clear-log-btn" class="clear-log-btn">Clear</button>
+      </div>
+      <div id="activity-log" class="activity-log"></div>
+    </div>
+  </div>
+
+  <div id="pairing-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Pair New Lock</h2>
+
+      <div id="pairing-step-scan">
+        <p>Put the lock into Pairing Mode from its keypad admin menu first, then tap below and choose it from the Bluetooth picker.</p>
+        <button id="scan-btn" class="modal-primary-btn">Scan for Lock</button>
+        <div id="scan-error" class="pairing-error hidden"></div>
+      </div>
+
+      <div id="pairing-step-code" class="hidden">
+        <p>Connected to <strong id="pairing-lock-id"></strong>.</p>
+        <p>Enter the 6-digit code shown on the lock's screen:</p>
+        <label class="modal-field">
+          Code
+          <input id="pairing-code-input" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="123456">
+        </label>
+        <label class="modal-field">
+          This phone's name
+          <input id="pairing-name-input" maxlength="32" value="My Phone">
+        </label>
+        <div id="pairing-error" class="pairing-error hidden"></div>
+        <button id="pairing-submit-btn" class="modal-primary-btn">Pair</button>
+      </div>
+
+      <button id="pairing-cancel-btn" class="modal-cancel-btn">Cancel</button>
+    </div>
+  </div>
+
+  <script type="module" src="mobile.js"></script>
+</body>
+</html>
