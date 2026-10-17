@@ -108,8 +108,8 @@ def action_name(value):
 def store_device_info(pubkey: bytes, name: str, sig: bytes, via: str) -> str | None:
     pass
 
-# Name carried over from part2, but this should be used for cloud pairing/unpairing as well.
-def find_ble_device(device_id: str) -> dict | None:
+# Look up a paired controller by device_id (used by cloud unlock and unpairing).
+def find_paired_device(device_id: str) -> dict | None:
     pass
 
 def remove_paired_device(device_id: str) -> bool:

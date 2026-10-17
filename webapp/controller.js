@@ -23,10 +23,9 @@ const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
 // Same IndexedDB database/identity store as part2's mobile.js - a phone
-// that paired over BLE and registers again here via cloud pairing should
-// reuse the same identity key, not generate a second one. See
-// README.md#controller-via-cloud, "Why this reuses the BLE identity
-// without merging the two webapp pages".
+// that already has an identity from part2 reuses that same key here
+// instead of generating a second one. See README.md#controller-via-cloud,
+// "Reusing the part2 phone identity".
 const DB_NAME = 'secureiot-mobile';
 const DB_VERSION = 2;
 const STORE_IDENTITY = 'identity';
