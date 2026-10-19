@@ -1,0 +1,830 @@
+threagile_version: 1.0.0
+
+# =============================================================================
+# SmartLock V2 - Threagile starter model (Lab 3)
+# =============================================================================
+#
+# This file already runs. Try it before changing anything:
+#
+#   docker run --rm -it -v "$(pwd)":/app/work threagile/threagile -verbose -model /app/work/threagile.yaml -output /app/work
+#
+# What's GIVEN (you may adjust it if your design differs, but you don't have to):
+#   - metadata, data assets (with CIA ratings), technical asset properties,
+#     trust boundaries
+#
+# What you FILL IN - search for "TODO":
+#   1. data_assets_processed / data_assets_stored for every technical asset
+#   2. every communication link: uncomment it, then set its protocol,
+#      authentication, authorization, readonly flag and the data it carries
+#   3. risk_tracking for every risk of severity "elevated" or higher
+#      (see the long explanation right above the risk_tracking section)
+#
+# Model what you actually BUILT, not what you wish you had built. If a link
+# has no authentication, say "none" - that's what the analysis needs to see.
+#
+# Every allowed enum value (protocols, technologies, statuses, ...):
+#   docker run --rm -it threagile/threagile -list-types
+#
+# Keep "title" at 31 characters or fewer - Threagile uses it as an Excel sheet
+# name and fails before writing report.pdf if it's longer.
+# =============================================================================
+
+
+title: SmartLock V2
+
+date: 2026-11-01            # TODO: today's date
+
+author:
+  name: TODO Your Name      # TODO
+  homepage: ""
+
+management_summary_comment: >
+  Threat model for the part3 SmartLock system: two Pico W locks publishing
+  over MQTT (shiftr.io) to an edge relay (edge.py on a laptop), which mirrors
+  state into Firestore. A public dashboard reads Firestore, and a phone-based
+  controller pairs with / unlocks the locks through Firestore.
+
+business_criticality: critical
+
+business_overview:
+  description: >
+    A smart door lock. The door must open for the PIN holder or a paired
+    controller, and for nobody else.
+
+technical_overview:
+  description: >
+    Pico W (x2) - MQTT - shiftr.io broker - MQTT - edge.py (laptop) -
+    Firestore - dashboard and controller pages (Firebase Hosting).
+
+# Optional free-text sections - shown in the report, not used by the risk rules.
+questions:
+abuse_cases:
+security_requirements:
+
+tags_available:
+  - pico-w
+  - micropython
+  - shiftr
+  - mqtt
+  - gcp
+  - firestore
+  - firebase-hosting
+  - indexeddb
+
+
+# =============================================================================
+# DATA ASSETS - the information worth protecting. (GIVEN)
+# =============================================================================
+#
+# Template:
+#
+#  Some Data Asset:                  # display name
+#    id: some-data                   # what everything else references
+#    description: ...
+#    usage: business                 # business | devops
+#    origin: ...                     # where it comes from
+#    owner: ...
+#    quantity: few                   # very-few | few | many | very-many
+#    confidentiality: confidential   # public | internal | restricted | confidential | strictly-confidential
+#    integrity: critical             # archive | operational | important | critical | mission-critical
+#    availability: important         # same scale as integrity
+#    justification_cia_rating: ...   # why those three ratings
+#
+
+data_assets:
+
+  Device Attestation Private Key:
+    id: device-attestation-key
+    description: Per-device ECDSA P-256 private key (device_private_key.bin), generated on the Pico by keygen_device.py and never exported.
+    usage: business
+    origin: Generated on-device
+    owner: Lock owner
+    quantity: very-few
+    confidentiality: strictly-confidential
+    integrity: critical
+    availability: important
+    justification_cia_rating: Anyone holding it can sign telemetry that edge.py marks as attested.
+
+  Device Public Keys:
+    id: device-public-keys
+    description: device_pubkey_<LOCKID>.der files copied by hand from each Pico to the edge laptop.
+    usage: business
+    origin: Copied out-of-band at provisioning
+    owner: Lock owner
+    quantity: very-few
+    confidentiality: public
+    integrity: critical
+    availability: important
+    justification_cia_rating: Public, but swapping one makes edge.py trust a forged identity.
+
+  Controller Identity Private Key:
+    id: controller-identity-key
+    description: Phone's ECDSA key pair from part2, stored non-extractable in the browser's IndexedDB.
+    usage: business
+    origin: Generated in the phone browser (Web Crypto)
+    owner: Lock user
+    quantity: very-few
+    confidentiality: strictly-confidential
+    integrity: critical
+    availability: important
+    justification_cia_rating: Signs unlock responses - equivalent to a door key.
+
+  Paired Controller Public Keys:
+    id: paired-controllers
+    description: paired_device.json on each Pico - the device_id -> public key list of authorized controllers.
+    usage: business
+    origin: Pairing protocol
+    owner: Lock owner
+    quantity: few
+    confidentiality: internal
+    integrity: mission-critical
+    availability: critical
+    justification_cia_rating: Adding a key here is equivalent to handing out a door key.
+
+  PIN Hash:
+    id: pin-hash
+    description: Salted PIN hash in pin_store.json on each Pico.
+    usage: business
+    origin: Init phase on keypad
+    owner: Lock owner
+    quantity: very-few
+    confidentiality: confidential
+    integrity: mission-critical
+    availability: critical
+    justification_cia_rating: Offline-crackable (small PIN space) if extracted from flash.
+
+  MQTT Broker Token:
+    id: mqtt-token
+    description: Single shared shiftr.io credential (user "secure") used by both Picos and edge.py, with full publish/subscribe access.
+    usage: devops
+    origin: shiftr.io instance
+    owner: Course staff
+    quantity: very-few
+    confidentiality: confidential
+    integrity: important
+    availability: important
+    justification_cia_rating: Grants publish on every topic, including command topics for every lock.
+
+  GCP Service Account Key:
+    id: gcp-sa-key
+    description: Service account JSON key used by edge.py (Admin SDK, bypasses Firestore rules).
+    usage: devops
+    origin: GCP IAM
+    owner: Lock owner
+    quantity: very-few
+    confidentiality: strictly-confidential
+    integrity: critical
+    availability: important
+    justification_cia_rating: Full read/write to the whole Firestore DB, rules not applied.
+
+  Pairing Request:
+    id: pairing-request
+    description: "{code, pubkey, name, sig} written by the controller to pairing_requests/{lockid} and relayed to the device. Contains the 6-digit one-time code in plaintext."
+    usage: business
+    origin: Controller page
+    owner: Lock user
+    quantity: few
+    confidentiality: confidential
+    integrity: critical
+    availability: operational
+    justification_cia_rating: The code is the only thing proving physical presence at the keypad during cloud pairing.
+
+  Pairing Status:
+    id: pairing-status
+    description: Result of a pairing attempt in pairing_status/{lockid}.
+    usage: business
+    origin: Device via edge.py
+    owner: Lock owner
+    quantity: few
+    confidentiality: public
+    integrity: important
+    availability: operational
+    justification_cia_rating: World-readable, low value.
+
+  Unlock Exchange:
+    id: unlock-exchange
+    description: commands/{lockid} - device_id, device-issued nonce, and the controller's signature over LOCKID:UNLOCK:nonce:device_id.
+    usage: business
+    origin: Controller page + device
+    owner: Lock user
+    quantity: many
+    confidentiality: public
+    integrity: critical
+    availability: important
+    justification_cia_rating: World-readable by design; integrity protected by the signature and single-use nonce.
+
+  Lock Events:
+    id: lock-events
+    description: Status/unlock/pairing events published by the Picos with attestation, stored as locks/{lockid} and locks/{lockid}/logs.
+    usage: business
+    origin: Picos
+    owner: Lock owner
+    quantity: very-many
+    confidentiality: public
+    integrity: important
+    availability: operational
+    justification_cia_rating: Public dashboard data; tampering misleads the owner but does not open the door.
+
+  Webapp Code:
+    id: webapp-code
+    description: Static HTML/JS for the dashboard and controller pages, including the (non-secret) firebaseConfig.
+    usage: devops
+    origin: Course repo
+    owner: Lock owner
+    quantity: few
+    confidentiality: public
+    integrity: critical
+    availability: important
+    justification_cia_rating: Modified controller JS could exfiltrate signatures or sign attacker-chosen messages.
+
+# =============================================================================
+# TECHNICAL ASSETS - the components and what talks to what.
+# =============================================================================
+#
+# Template:
+#
+#  Some Component:
+#    id: some-component
+#    description: ...
+#    type: process                   # external-entity | process | datastore
+#    usage: business
+#    used_as_client_by_human: false  # true for browsers/apps a person uses
+#    out_of_scope: false
+#    justification_out_of_scope:
+#    size: application               # system | service | application | component
+#    technology: web-server          # see -list-types (iot-device, browser, database, ...)
+#    tags:
+#    internet: false                 # directly reachable from the internet?
+#    machine: physical               # physical | virtual | container | serverless
+#    encryption: none                # encryption of data AT REST on this asset
+#    owner: ...
+#    confidentiality: ...            # CIA of the asset itself - usually the
+#    integrity: ...                  #   highest rating of the data it holds
+#    availability: ...
+#    justification_cia_rating: ...
+#    multi_tenant: false
+#    redundant: false
+#    custom_developed_parts: true    # did you write code that runs here?
+#    data_assets_processed:          # data that passes through it (list of data asset ids)
+#      - some-data
+#    data_assets_stored:             # data it keeps at rest
+#      - some-data
+#    data_formats_accepted:          # json | xml | serialization | file | csv
+#      - json
+#    communication_links:            # OUTGOING connections - defined on the side
+#                                    # that initiates the connection
+#      Some Link:
+#        target: some-other-component   # id of the technical asset it connects to
+#        description: ...
+#        protocol: https                # see -list-types (https, mqtt, nosql-access-protocol-encrypted, ...)
+#        authentication: none           # none | credentials | session-id | token | client-certificate | two-factor | externalized
+#        authorization: none            # none | technical-user | enduser-identity-propagation
+#        tags:
+#        vpn: false
+#        ip_filtered: false
+#        readonly: false                # true if the initiator only ever reads
+#        usage: business
+#        data_assets_sent:              # initiator -> target
+#          - some-data
+#        data_assets_received:          # target -> initiator (responses, subscriptions)
+#          - some-data
+#
+# "authentication" is how the TARGET knows who is connecting. "authorization"
+# is whether access is then limited per identity: technical-user = one service
+# identity, enduser-identity-propagation = per-end-user permissions.
+#
+# Threagile's protocol list has no MQTT-over-TLS value - use "mqtt" and deal
+# with what the analysis says about it during triage.
+
+technical_assets:
+
+  Pico Lock 1:
+    id: pico-lock-1
+    description: Pico W running the lock firmware (keypad, LCD, MQTT client, ECDSA verify/sign).
+    type: process
+    usage: business
+    used_as_client_by_human: false
+    out_of_scope: false
+    justification_out_of_scope:
+    size: system
+    technology: iot-device
+    tags:
+      - pico-w
+      - micropython
+    internet: false
+    machine: physical
+    encryption: none
+    owner: Lock owner
+    confidentiality: strictly-confidential
+    integrity: mission-critical
+    availability: critical
+    justification_cia_rating: Holds the lock's secrets and physically actuates the lock.
+    multi_tenant: false
+    redundant: false
+    custom_developed_parts: true
+    data_assets_processed:    # TODO
+    data_assets_stored:       # TODO: what lives in this device's flash?
+    data_formats_accepted:
+      - json
+    communication_links:
+      # TODO: uncomment and complete
+      # MQTT to Broker:
+      #   target: mqtt-broker
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+
+  Pico Lock 2:
+    id: pico-lock-2
+    description: Second Pico W, same firmware, unique CLIENT_ID/LOCKID and its own attestation key.
+    type: process
+    usage: business
+    used_as_client_by_human: false
+    out_of_scope: false
+    justification_out_of_scope:
+    size: system
+    technology: iot-device
+    tags:
+      - pico-w
+      - micropython
+    internet: false
+    machine: physical
+    encryption: none
+    owner: Lock owner
+    confidentiality: strictly-confidential
+    integrity: mission-critical
+    availability: critical
+    justification_cia_rating: Same as Pico Lock 1.
+    multi_tenant: false
+    redundant: false
+    custom_developed_parts: true
+    data_assets_processed:    # TODO
+    data_assets_stored:       # TODO
+    data_formats_accepted:
+      - json
+    communication_links:
+      # TODO: uncomment and complete
+      # MQTT to Broker:
+      #   target: mqtt-broker
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+
+  MQTT Broker:
+    id: mqtt-broker
+    description: Hosted shiftr.io instance (secure.cloud.shiftr.io).
+    type: process
+    usage: business
+    used_as_client_by_human: false
+    out_of_scope: false
+    justification_out_of_scope:
+    size: service
+    technology: message-queue
+    tags:
+      - shiftr
+      - mqtt
+    internet: true
+    machine: virtual
+    encryption: none
+    owner: shiftr.io (third party)
+    confidentiality: confidential
+    integrity: critical
+    availability: critical
+    justification_cia_rating: All lock traffic passes through it.
+    multi_tenant: true
+    redundant: false
+    custom_developed_parts: false
+    data_assets_processed:    # TODO
+    data_assets_stored:
+    data_formats_accepted:
+      - json
+    communication_links:      # none - the broker never initiates a connection
+
+  Edge Relay:
+    id: edge-relay
+    description: edge.py on the laptop - bridges MQTT and Firestore, verifies device attestations, rate-limits relayed pairing/command writes.
+    type: process
+    usage: business
+    used_as_client_by_human: false
+    out_of_scope: false
+    justification_out_of_scope:
+    size: application
+    technology: gateway
+    tags:
+      - mqtt
+      - gcp
+    internet: false
+    machine: physical
+    encryption: none
+    owner: Lock owner
+    confidentiality: strictly-confidential
+    integrity: critical
+    availability: critical
+    justification_cia_rating: Holds cloud credentials and decides what counts as attested.
+    multi_tenant: false
+    redundant: false
+    custom_developed_parts: true
+    data_assets_processed:    # TODO
+    data_assets_stored:       # TODO: what files does edge.py need on disk?
+    data_formats_accepted:
+      - json
+    communication_links:
+      # TODO: uncomment and complete both links
+      # MQTT to Broker:
+      #   target: mqtt-broker
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+      # Firestore Admin SDK:
+      #   target: firestore
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+
+  Firestore:
+    id: firestore
+    description: Cloud Firestore - collections locks (+logs), pairing_requests, pairing_status, commands.
+    type: datastore
+    usage: business
+    used_as_client_by_human: false
+    out_of_scope: false
+    justification_out_of_scope:
+    size: service
+    technology: database
+    tags:
+      - gcp
+      - firestore
+    internet: true
+    machine: serverless
+    encryption: transparent
+    owner: Lock owner
+    confidentiality: confidential
+    integrity: critical
+    availability: critical
+    justification_cia_rating: Holds pairing requests and the unlock exchange.
+    multi_tenant: true
+    redundant: true
+    custom_developed_parts: false
+    data_assets_processed:
+    data_assets_stored:       # TODO
+    data_formats_accepted:
+      - json
+    communication_links:      # none - Firestore never initiates a connection
+
+  Firebase Hosting:
+    id: firebase-hosting
+    description: Serves the static dashboard and controller pages over HTTPS.
+    type: process
+    usage: business
+    used_as_client_by_human: false
+    out_of_scope: false
+    justification_out_of_scope:
+    size: service
+    technology: web-server
+    tags:
+      - gcp
+      - firebase-hosting
+    internet: true
+    machine: serverless
+    encryption: none
+    owner: Lock owner
+    confidentiality: public
+    integrity: critical
+    availability: important
+    justification_cia_rating: Serves the code that holds and uses the controller key.
+    multi_tenant: true
+    redundant: true
+    custom_developed_parts: false
+    data_assets_processed:
+      - webapp-code
+    data_assets_stored:
+      - webapp-code
+    data_formats_accepted:
+      - file
+    communication_links:
+
+  Dashboard Browser:
+    id: dashboard-browser
+    description: Any browser loading the dashboard and reading lock state from Firestore.
+    type: external-entity
+    usage: business
+    used_as_client_by_human: true
+    out_of_scope: false
+    justification_out_of_scope:
+    size: application
+    technology: browser
+    tags:
+    internet: true
+    machine: physical
+    encryption: none
+    owner: Anyone
+    confidentiality: public
+    integrity: operational
+    availability: operational
+    justification_cia_rating: Read-only view.
+    multi_tenant: false
+    redundant: false
+    custom_developed_parts: true
+    data_assets_processed:    # TODO (webapp-code is one of them)
+      - webapp-code
+    data_assets_stored:
+    data_formats_accepted:
+      - json
+    communication_links:
+      # Worked example - this one is done for you.
+      Load Dashboard:
+        target: firebase-hosting
+        description: HTTPS GET of the static dashboard page and its JS.
+        protocol: https
+        authentication: none
+        authorization: none
+        tags:
+        vpn: false
+        ip_filtered: false
+        readonly: true
+        usage: business
+        data_assets_sent:
+        data_assets_received:
+          - webapp-code
+      # TODO: uncomment and complete
+      # Read Lock State:
+      #   target: firestore
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+
+  Phone Controller:
+    id: phone-controller
+    description: Controller page (controller.html) in the user's phone browser; pairs with and unlocks locks through Firestore.
+    type: process
+    usage: business
+    used_as_client_by_human: true
+    out_of_scope: false
+    justification_out_of_scope:
+    size: application
+    technology: browser
+    tags:
+      - indexeddb
+    internet: true
+    machine: physical
+    encryption: none
+    owner: Lock user
+    confidentiality: strictly-confidential
+    integrity: critical
+    availability: important
+    justification_cia_rating: Holds the controller's identity.
+    multi_tenant: false
+    redundant: false
+    custom_developed_parts: true
+    data_assets_processed:    # TODO
+    data_assets_stored:       # TODO: what does the page keep in IndexedDB?
+    data_formats_accepted:
+      - json
+    communication_links:
+      # TODO: uncomment and complete both links
+      # Load Controller Page:
+      #   target: firebase-hosting
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+      # Pairing and Unlock via Firestore:
+      #   target: firestore
+      #   description: TODO
+      #   protocol: TODO
+      #   authentication: TODO
+      #   authorization: TODO
+      #   tags:
+      #   vpn: false
+      #   ip_filtered: false
+      #   readonly: TODO
+      #   usage: business
+      #   data_assets_sent:
+      #   data_assets_received:
+
+
+# =============================================================================
+# TRUST BOUNDARIES - where control changes hands. (GIVEN)
+# =============================================================================
+#
+# Template:
+#
+#  Some Boundary:
+#    id: some-boundary
+#    description: ...
+#    type: network-on-prem          # see -list-types (execution-environment, network-cloud-provider, ...)
+#    tags:
+#    technical_assets_inside:       # technical asset ids
+#      - some-component
+#    trust_boundaries_nested:       # boundary ids, for boundaries inside this one
+#      - some-inner-boundary
+#
+# Anything outside every boundary (here: the dashboard browser) is treated as
+# "the internet". Data crossing a boundary is what triggers many of the rules.
+
+trust_boundaries:
+
+  Lock 1 Hardware:
+    id: lock-1-hw
+    description: The physical Pico W of lock 1.
+    type: execution-environment
+    tags:
+    technical_assets_inside:
+      - pico-lock-1
+    trust_boundaries_nested:
+
+  Lock 2 Hardware:
+    id: lock-2-hw
+    description: The physical Pico W of lock 2.
+    type: execution-environment
+    tags:
+    technical_assets_inside:
+      - pico-lock-2
+    trust_boundaries_nested:
+
+  Edge Laptop:
+    id: edge-laptop
+    description: The laptop running edge.py.
+    type: execution-environment
+    tags:
+    technical_assets_inside:
+      - edge-relay
+    trust_boundaries_nested:
+
+  Home WiFi:
+    id: home-lan
+    description: Local WiFi network the Picos and the edge laptop join.
+    type: network-on-prem
+    tags:
+    technical_assets_inside:
+    trust_boundaries_nested:
+      - lock-1-hw
+      - lock-2-hw
+      - edge-laptop
+
+  shiftr.io Cloud:
+    id: shiftr-cloud
+    description: Third-party hosted MQTT broker.
+    type: network-cloud-provider
+    tags:
+      - shiftr
+    technical_assets_inside:
+      - mqtt-broker
+    trust_boundaries_nested:
+
+  Google Cloud Project:
+    id: gcp-project
+    description: Firebase/GCP project hosting Firestore and the static webapp.
+    type: network-cloud-provider
+    tags:
+      - gcp
+    technical_assets_inside:
+      - firestore
+      - firebase-hosting
+    trust_boundaries_nested:
+
+  User Phone:
+    id: user-phone
+    description: The user's phone.
+    type: execution-environment
+    tags:
+    technical_assets_inside:
+      - phone-controller
+    trust_boundaries_nested:
+
+
+shared_runtimes:
+
+individual_risk_categories:
+
+
+# =============================================================================
+# RISK TRACKING - your triage of what Threagile found. (TODO)
+# =============================================================================
+#
+# Workflow:
+#   1. Finish the model above and run Threagile.
+#   2. Open risks.xlsx (or report.pdf) and list every risk whose Severity is
+#      "elevated", "high" or "critical".
+#   3. Add one entry below per risk, keyed by its exact risk ID.
+#   4. Re-run Threagile. A typo in an ID fails the run with "risk id not
+#      found", so you'll know immediately.
+#
+# --- Where do risk IDs come from? ---
+#
+# Every risk Threagile generates has an ID made of the rule name plus the
+# elements involved, separated by "@". You don't construct these yourself -
+# copy them from the "ID" column of risks.xlsx (or the small grey text under
+# each risk in report.pdf). Examples of the shapes you'll see:
+#
+#   missing-hardening@some-component
+#     rule "missing-hardening", about one technical asset
+#
+#   missing-authentication@client-app>some-link@client-app@some-server
+#     rule @ <asset id>><link name, lowercased, spaces -> dashes> @ source asset @ target asset
+#
+# --- Shortcut: let Threagile write the skeleton for you ---
+#
+#   docker run --rm -it -v "$(pwd)":/app/work threagile/threagile -model /app/work/threagile.yaml -output /app/work -execute-model-macro seed-risk-tracking
+#
+# Type "Yes" when asked. It adds an entry with status "unchecked" for EVERY
+# untracked risk. Fill in the elevated+ ones and delete the rest. WARNING: the
+# macro rewrites the whole file and deletes every comment in it (including
+# this one) - commit or copy this file first.
+#
+# --- What an entry looks like ---
+#
+#  "missing-hardening@some-component":   # quote the key - IDs contain @ and >
+#    status: accepted                    # see below
+#    justification: >
+#      <Where in YOUR design this is handled, or why it's acceptable / doesn't
+#      apply - cite a file, function or Firestore rule.>
+#      ATT&CK: <Txxxx[.yyy] (Technique Name)> - or "no technique fits" + one sentence why.
+#    date: 2026-11-01
+#    checked_by: Your Name
+#
+# Statuses you should use:
+#   mitigated       your design already defends against it - say where
+#   accepted        it's real, you're not fixing it - say why that's OK and
+#                   what the residual risk is
+#   false-positive  it doesn't actually apply to this system - say why the
+#                   rule fired anyway
+#   (Threagile also knows unchecked, in-discussion and in-progress - don't
+#   leave any elevated+ risk in those states.)
+#
+# --- Example (a made-up thermostat system, NOT this lab) ---
+#
+#  "missing-authentication@phone-app>set-temperature@phone-app@thermostat-api":
+#    status: mitigated
+#    justification: >
+#      The link is marked "none" because the HTTP request itself carries no
+#      session, but every request body is HMAC-signed with a per-phone key
+#      checked in api/handlers.py:verify_hmac() before any setpoint changes.
+#      ATT&CK: T1557 (Adversary-in-the-Middle) - a captured request can't be
+#      altered without the key.
+#    date: 2026-11-01
+#    checked_by: Jane Doe
+#
+#  "unencrypted-asset@thermostat-device":
+#    status: accepted
+#    justification: >
+#      Flash on the MCU is not encrypted; the WiFi password can be read with
+#      physical access. Accepted: the device is inside the home, and the
+#      password only grants access to the home network. ATT&CK: no technique
+#      fits - Enterprise ATT&CK has no technique for reading MCU flash over a
+#      debug port (closest: T1552 Unsecured Credentials).
+#    date: 2026-11-01
+#    checked_by: Jane Doe
+#
+# Wildcards: "*" can replace a whole @-separated part to cover several risks
+# with one entry (e.g. "missing-hardening@*"). Only do this when the SAME
+# justification is genuinely true for all of them.
+
+risk_tracking:
