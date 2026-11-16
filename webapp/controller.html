@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Cloud Controller</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>☁️ Cloud Controller</h1>
+      <div class="header-actions">
+        <a class="back-btn visible" href="index.html">← Dashboard</a>
+        <button class="primary-btn" onclick="openPairingModal()">Register New Lock</button>
+      </div>
+    </header>
+
+    <div id="locks-list" class="locks-list">
+      <div class="loading">
+        <div class="spinner"></div>
+        <p>Loading registered locks...</p>
+      </div>
+    </div>
+
+    <div class="activity-log-panel">
+      <h2>Activity Log</h2>
+      <div id="activity-log"></div>
+    </div>
+  </div>
+
+  <!-- Pairing modal -->
+  <div id="pairing-modal" class="modal-overlay hidden">
+    <div class="modal">
+      <h2>Register a Lock</h2>
+      <label for="pairing-lockid-input">Lock ID</label>
+      <input id="pairing-lockid-input" type="text" placeholder="e.g. LOCK2" autocomplete="off">
+      <label for="pairing-code-input">6-digit code (shown on the lock's screen)</label>
+      <input id="pairing-code-input" type="text" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off">
+      <label for="pairing-name-input">Display name (optional)</label>
+      <input id="pairing-name-input" type="text" placeholder="My Phone" autocomplete="off">
+      <div id="pairing-error" class="modal-error hidden"></div>
+      <div class="modal-actions">
+        <button class="modal-cancel-btn" onclick="closePairingModal()">Cancel</button>
+        <button id="pairing-submit-btn" class="primary-btn" onclick="confirmPairing()">Register</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="controller.js"></script>
+</body>
+</html>
